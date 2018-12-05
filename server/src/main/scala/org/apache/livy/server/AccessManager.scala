@@ -20,6 +20,7 @@ package org.apache.livy.server
 import java.security.AccessControlException
 
 import org.apache.livy.{LivyConf, Logging}
+import org.apache.livy.sessions.Session
 
 private[livy] class AccessManager(conf: LivyConf) extends Logging {
   private val aclsOn = conf.getBoolean(LivyConf.ACCESS_CONTROL_ENABLED)
@@ -130,14 +131,18 @@ private[livy] class AccessManager(conf: LivyConf) extends Logging {
   /**
    * Check that the request's user has modify access to resources owned by the given target user.
    */
-  def hasModifyAccess(target: String, requestUser: String): Boolean = {
-    requestUser == target || checkModifyPermissions(requestUser)
+  def hasModifyAccess(session: Session, effectiveUser: String): Boolean = {
+    effectiveUser == session.owner ||
+      session.proxyUser.contains(effectiveUser) ||
+      checkModifyPermissions(effectiveUser)
   }
 
   /**
    * Check that the request's user has view access to resources owned by the given target user.
    */
-  def hasViewAccess(target: String, requestUser: String): Boolean = {
-    requestUser == target || checkViewPermissions(requestUser)
+  def hasViewAccess(session: Session, effectiveUser: String): Boolean = {
+    effectiveUser == session.owner ||
+      session.proxyUser.contains(effectiveUser) ||
+      checkViewPermissions(effectiveUser)
   }
 }

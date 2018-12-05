@@ -35,7 +35,6 @@ class CreateInteractiveRequestSpec extends FunSpec with LivyBaseUnitTestSuite {
       val json = """{ "kind" : "pyspark" }"""
       val req = mapper.readValue(json, classOf[CreateInteractiveRequest])
       assert(req.kind === PySpark)
-      assert(req.proxyUser === None)
       assert(req.jars === List())
       assert(req.pyFiles === List())
       assert(req.files === List())

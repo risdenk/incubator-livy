@@ -18,9 +18,7 @@
 package org.apache.livy.server.batch
 
 class CreateBatchRequest {
-
   var file: String = _
-  var proxyUser: Option[String] = None
   var args: List[String] = List()
   var className: Option[String] = None
   var jars: List[String] = List()
@@ -37,7 +35,6 @@ class CreateBatchRequest {
   var conf: Map[String, String] = Map()
 
   override def toString: String = {
-    s"[proxyUser: $proxyUser, " +
       s"file: $file, " +
       (if (args.nonEmpty) s"args: ${args.mkString(",")}, " else "") +
       (if (jars.nonEmpty) s"jars: ${jars.mkString(",")}, " else "") +

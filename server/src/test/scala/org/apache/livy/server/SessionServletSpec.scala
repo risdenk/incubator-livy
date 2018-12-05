@@ -29,14 +29,13 @@ import org.apache.livy.sessions.Session.RecoveryMetadata
 
 object SessionServletSpec {
 
-  val PROXY_USER = "proxyUser"
-
-  class MockSession(id: Int, owner: String, livyConf: LivyConf)
+  class MockSession(id: Int,
+                    owner: String,
+                    override val proxyUser: Option[String],
+                    livyConf: LivyConf)
     extends Session(id, owner, livyConf) {
 
     case class MockRecoveryMetadata(id: Int) extends RecoveryMetadata()
-
-    override val proxyUser = None
 
     override def recoveryMetadata: RecoveryMetadata = MockRecoveryMetadata(0)
 
@@ -45,10 +44,9 @@ object SessionServletSpec {
     override protected def stopSession(): Unit = ()
 
     override def logLines(): IndexedSeq[String] = IndexedSeq("log")
-
   }
 
-  case class MockSessionView(id: Int, owner: String, logs: Seq[String])
+  case class MockSessionView(id: Int, owner: String, proxyUser: Option[String], logs: Seq[String])
 
   def createServlet(conf: LivyConf): SessionServlet[Session, RecoveryMetadata] = {
     val sessionManager = new SessionManager[Session, RecoveryMetadata](
@@ -61,36 +59,32 @@ object SessionServletSpec {
     val accessManager = new AccessManager(conf)
     new SessionServlet(sessionManager, conf, accessManager) with RemoteUserOverride {
       override protected def createSession(req: HttpServletRequest): Session = {
-        val params = bodyAs[Map[String, String]](req)
-        accessManager.checkImpersonation(params.get(PROXY_USER), remoteUser(req), livyConf)
-        new MockSession(sessionManager.nextId(), remoteUser(req), conf)
+        val owner = remoteUser(req)
+        val proxyUser = getProxyUserFromDoAs(req)
+        accessManager.checkImpersonation(proxyUser, owner, livyConf)
+        new MockSession(sessionManager.nextId(), owner, proxyUser, conf)
       }
 
       override protected def clientSessionView(
           session: Session,
           req: HttpServletRequest): Any = {
-        val logs = if (accessManager.hasViewAccess(session.owner, remoteUser(req))) {
+        val logs = if (accessManager.hasViewAccess(session, effectiveUser(req))) {
           session.logLines()
         } else {
           Nil
         }
-        MockSessionView(session.id, session.owner, logs)
+        MockSessionView(session.id, session.owner, session.proxyUser, logs)
       }
     }
   }
-
 }
 
 class SessionServletSpec extends BaseSessionServletSpec[Session, RecoveryMetadata] {
-
   import SessionServletSpec._
 
   override def createServlet(): SessionServlet[Session, RecoveryMetadata] = {
     SessionServletSpec.createServlet(createConf())
   }
-
-  private val aliceHeaders = makeUserHeaders("alice")
-  private val bobHeaders = makeUserHeaders("bob")
 
   private def delete(id: Int, headers: Map[String, String], expectedStatus: Int): Unit = {
     jdelete[Map[String, Any]](s"/$id", headers = headers, expectedStatus = expectedStatus) { _ =>
@@ -136,12 +130,14 @@ class SessionServletSpec extends BaseSessionServletSpec[Session, RecoveryMetadat
     }
 
     it("should not allow regular users to impersonate others") {
-      jpost[MockSessionView]("/", Map(PROXY_USER -> "bob"), headers = aliceHeaders,
+      val headers = aliceHeaders + (BaseSessionServletSpec.PROXY_USER_HEADER -> "bob")
+      jpost[MockSessionView]("/", Map(), headers = headers,
         expectedStatus = SC_FORBIDDEN) { _ => }
     }
 
     it("should allow admins to impersonate anyone") {
-      jpost[MockSessionView]("/", Map(PROXY_USER -> "bob"), headers = adminHeaders) { res =>
+      val headers = adminHeaders + (BaseSessionServletSpec.PROXY_USER_HEADER -> "bob")
+      jpost[MockSessionView]("/", Map(), headers = headers) { res =>
         delete(res.id, adminHeaders, SC_OK)
       }
     }
@@ -157,9 +153,6 @@ class AclsEnabledSessionServletSpec extends BaseSessionServletSpec[Session, Reco
     SessionServletSpec.createServlet(conf)
   }
 
-  private val aliceHeaders = makeUserHeaders("alice")
-  private val bobHeaders = makeUserHeaders("bob")
-
   private def delete(id: Int, headers: Map[String, String], expectedStatus: Int): Unit = {
     jdelete[Map[String, Any]](s"/$id", headers = headers, expectedStatus = expectedStatus) { _ =>
       // Nothing to do.
@@ -170,6 +163,7 @@ class AclsEnabledSessionServletSpec extends BaseSessionServletSpec[Session, Reco
     it("should attach owner information to sessions") {
       jpost[MockSessionView]("/", Map(), headers = aliceHeaders) { res =>
         assert(res.owner === "alice")
+        assert(res.proxyUser === None)
         assert(res.logs === IndexedSeq("log"))
         delete(res.id, aliceHeaders, SC_OK)
       }
@@ -179,6 +173,7 @@ class AclsEnabledSessionServletSpec extends BaseSessionServletSpec[Session, Reco
       jpost[MockSessionView]("/", Map(), headers = aliceHeaders) { res =>
         jget[MockSessionView](s"/${res.id}", headers = bobHeaders) { res =>
           assert(res.owner === "alice")
+          assert(res.proxyUser === None)
           // Other user cannot see the logs
           assert(res.logs === Nil)
         }
@@ -207,15 +202,74 @@ class AclsEnabledSessionServletSpec extends BaseSessionServletSpec[Session, Reco
     }
 
     it("should not allow regular users to impersonate others") {
-      jpost[MockSessionView]("/", Map(PROXY_USER -> "bob"), headers = aliceHeaders,
+      jpost[MockSessionView]("/", Map(), headers = aliceProxyBobHeaders,
         expectedStatus = SC_FORBIDDEN) { _ => }
     }
 
     it("should allow admins to impersonate anyone") {
-      jpost[MockSessionView]("/", Map(PROXY_USER -> "bob"), headers = adminHeaders) { res =>
-        delete(res.id, bobHeaders, SC_FORBIDDEN)
+      jpost[MockSessionView]("/", Map(), headers = adminProxyBobHeaders) { res =>
+        jget[MockSessionView](s"/${res.id}", headers = bobHeaders) { res =>
+          assert(res.owner === "__admin__")
+          assert(res.proxyUser.contains("bob"))
+          assert(res.logs === IndexedSeq("log"))
+        }
+        jget[MockSessionView](s"/${res.id}", headers = adminHeaders) { res =>
+          assert(res.owner === "__admin__")
+          assert(res.proxyUser.contains("bob"))
+          assert(res.logs === IndexedSeq("log"))
+        }
         delete(res.id, adminHeaders, SC_OK)
       }
     }
+
+    it("Ensure proxy only shows proxied user data") {
+      jpost[MockSessionView]("/", Map(), headers = adminProxyAliceHeaders) { res =>
+        jget[MockSessionView](s"/${res.id}", headers = bobHeaders) { res =>
+          assert(res.owner === "__admin__")
+          assert(res.proxyUser.contains("alice"))
+          // Other user cannot see the logs
+          assert(res.logs === Nil)
+        }
+
+        jget[MockSessionView](s"/${res.id}", headers = adminProxyBobHeaders) { res =>
+          assert(res.owner === "__admin__")
+          assert(res.proxyUser.contains("alice"))
+          // Other user cannot see the logs
+          assert(res.logs === Nil)
+        }
+
+        // Users with access permission could see the logs
+        jget[MockSessionView](s"/${res.id}", headers = viewUserHeaders) { res =>
+          assert(res.logs === IndexedSeq("log"))
+        }
+        jget[MockSessionView](s"/${res.id}", headers = modifyUserHeaders) { res =>
+          assert(res.logs === IndexedSeq("log"))
+        }
+        jget[MockSessionView](s"/${res.id}", headers = adminHeaders) { res =>
+          assert(res.logs === IndexedSeq("log"))
+        }
+
+        delete(res.id, bobHeaders, SC_FORBIDDEN)
+        delete(res.id, aliceHeaders, SC_OK)
+      }
+    }
+
+    it("Ensure doAs overrides proxyUser config") {
+      jpost[MockSessionView]("/", Map(), headers = adminProxyAliceHeaders) { res =>
+        assert(res.owner === "__admin__")
+        assert(res.proxyUser.contains("alice"))
+        assert(res.logs === IndexedSeq("log"))
+        delete(res.id, aliceHeaders, SC_OK)
+      }
+    }
+
+//    it("Ensure proxyUser still works") {
+//      jpost[MockSessionView]("/", Map(), headers = adminHeaders) { res =>
+//        assert(res.owner === "__admin__")
+//        assert(res.proxyUser.contains("alice"))
+//        assert(res.logs === IndexedSeq("log"))
+//        delete(res.id, aliceHeaders, SC_OK)
+//      }
+//    }
   }
 }

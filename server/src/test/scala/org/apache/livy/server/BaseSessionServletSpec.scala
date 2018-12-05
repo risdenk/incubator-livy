@@ -26,10 +26,11 @@ import org.apache.livy.sessions.Session
 import org.apache.livy.sessions.Session.RecoveryMetadata
 
 object BaseSessionServletSpec {
-
   /** Header used to override the user remote user in tests. */
   val REMOTE_USER_HEADER = "X-Livy-SessionServlet-User"
 
+  /** Header used to override the user proxy user in tests. */
+  val PROXY_USER_HEADER = "X-Livy-SessionServlet-Proxy-User"
 }
 
 abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
@@ -37,7 +38,7 @@ abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
   with BeforeAndAfterAll {
 
   /** Config map containing option that is blacklisted. */
-  protected val BLACKLISTED_CONFIG = Map("spark.do_not_set" -> "true")
+  protected val BLACKLISTED_CONFIG: Map[String, String] = Map("spark.do_not_set" -> "true")
 
   /** Name of the admin user. */
   protected val ADMIN = "__admin__"
@@ -46,14 +47,30 @@ abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
 
   private val MODIFY_USER = "__modify__"
 
+  protected val PROXY = "__proxy__"
+
   /** Create headers that identify a specific user in tests. */
   protected def makeUserHeaders(user: String): Map[String, String] = {
     defaultHeaders ++ Map(BaseSessionServletSpec.REMOTE_USER_HEADER -> user)
   }
 
-  protected val adminHeaders = makeUserHeaders(ADMIN)
-  protected val viewUserHeaders = makeUserHeaders(VIEW_USER)
-  protected val modifyUserHeaders = makeUserHeaders(MODIFY_USER)
+  /** Create headers that identify a specific user in tests. */
+  protected def makeProxyUserHeaders(user: String, proxyUser: String): Map[String, String] = {
+    makeUserHeaders(user) ++ Map(BaseSessionServletSpec.PROXY_USER_HEADER -> proxyUser)
+  }
+
+  protected val adminHeaders: Map[String, String] = makeUserHeaders(ADMIN)
+  protected val viewUserHeaders: Map[String, String] = makeUserHeaders(VIEW_USER)
+  protected val modifyUserHeaders: Map[String, String] = makeUserHeaders(MODIFY_USER)
+  protected val proxyHeaders: Map[String, String] = makeUserHeaders(PROXY)
+
+  protected val aliceHeaders: Map[String, String] = makeUserHeaders("alice")
+  protected val bobHeaders: Map[String, String] = makeUserHeaders("bob")
+
+  protected val adminProxyHeaders: Map[String, String] = makeProxyUserHeaders(ADMIN, PROXY)
+  protected val adminProxyAliceHeaders: Map[String, String] = makeProxyUserHeaders(ADMIN, "alice")
+  protected val adminProxyBobHeaders: Map[String, String] = makeProxyUserHeaders(ADMIN, "bob")
+  protected val aliceProxyBobHeaders: Map[String, String] = makeProxyUserHeaders("alice", "bob")
 
   /** Create a LivyConf with impersonation enabled and a superuser. */
   protected def createConf(): LivyConf = {
@@ -72,7 +89,7 @@ abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
 
   def createServlet(): SessionServlet[S, R]
 
-  protected val servlet = createServlet()
+  protected val servlet: SessionServlet[S, R] = createServlet()
 
   addServlet(servlet, "/*")
 
@@ -87,4 +104,7 @@ trait RemoteUserOverride {
     req.getHeader(BaseSessionServletSpec.REMOTE_USER_HEADER)
   }
 
+  override protected def getProxyUserFromDoAs(req: HttpServletRequest): Option[String] = {
+    Option(req.getHeader(BaseSessionServletSpec.PROXY_USER_HEADER))
+  }
 }

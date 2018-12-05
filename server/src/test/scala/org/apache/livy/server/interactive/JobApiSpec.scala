@@ -39,9 +39,6 @@ import org.apache.livy.sessions.{InteractiveSessionManager, SessionState}
 import org.apache.livy.test.jobs.{Echo, GetCurrentUser}
 
 class JobApiSpec extends BaseInteractiveServletSpec {
-
-  private val PROXY = "__proxy__"
-
   private var sessionId: Int = -1
 
   override def createServlet(): InteractiveSessionServlet = {
@@ -124,13 +121,12 @@ class JobApiSpec extends BaseInteractiveServletSpec {
     }
 
     it("should support user impersonation") {
-      val headers = makeUserHeaders(PROXY)
-      jpost[SessionInfo]("/", createRequest(inProcess = false), headers = headers) { data =>
+      jpost[SessionInfo]("/", createRequest(inProcess = false), headers = proxyHeaders) { data =>
         try {
           waitForIdle(data.id)
           data.owner should be (PROXY)
           data.proxyUser should be (PROXY)
-          val user = runJob(data.id, new GetCurrentUser(), headers = headers)
+          val user = runJob(data.id, new GetCurrentUser(), headers = proxyHeaders)
           user should be (PROXY)
         } finally {
           deleteSession(data.id)
@@ -140,8 +136,7 @@ class JobApiSpec extends BaseInteractiveServletSpec {
 
     it("should honor impersonation requests") {
       val request = createRequest(inProcess = false)
-      request.proxyUser = Some(PROXY)
-      jpost[SessionInfo]("/", request, headers = adminHeaders) { data =>
+      jpost[SessionInfo]("/", request, headers = adminProxyHeaders) { data =>
         try {
           waitForIdle(data.id)
           data.owner should be (ADMIN)

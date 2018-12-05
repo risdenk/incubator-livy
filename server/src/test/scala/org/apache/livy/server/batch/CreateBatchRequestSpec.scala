@@ -33,7 +33,6 @@ class CreateBatchRequestSpec extends FunSpec with LivyBaseUnitTestSuite {
       val json = """{ "file" : "foo" }"""
       val req = mapper.readValue(json, classOf[CreateBatchRequest])
       assert(req.file === "foo")
-      assert(req.proxyUser === None)
       assert(req.args === List())
       assert(req.className === None)
       assert(req.jars === List())

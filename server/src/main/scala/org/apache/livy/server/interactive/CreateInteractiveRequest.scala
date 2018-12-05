@@ -21,7 +21,6 @@ import org.apache.livy.sessions.{Kind, Shared}
 
 class CreateInteractiveRequest {
   var kind: Kind = Shared
-  var proxyUser: Option[String] = None
   var jars: List[String] = List()
   var pyFiles: List[String] = List()
   var files: List[String] = List()
@@ -37,7 +36,7 @@ class CreateInteractiveRequest {
   var heartbeatTimeoutInSecond: Int = 0
 
   override def toString: String = {
-    s"[kind: $kind, proxyUser: $proxyUser, " +
+    s"[kind: $kind, " +
       (if (jars.nonEmpty) s"jars: ${jars.mkString(",")}, " else "") +
       (if (pyFiles.nonEmpty) s"pyFiles: ${pyFiles.mkString(",")}, " else "") +
       (if (files.nonEmpty) s"files: ${files.mkString(",")}, " else "") +

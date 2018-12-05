@@ -57,10 +57,11 @@ object BatchSession extends Logging {
       livyConf: LivyConf,
       accessManager: AccessManager,
       owner: String,
+      proxyUser: Option[String],
       sessionStore: SessionStore,
       mockApp: Option[SparkApp] = None): BatchSession = {
     val appTag = s"livy-batch-$id-${Random.alphanumeric.take(8).mkString}"
-    val impersonatedUser = accessManager.checkImpersonation(request.proxyUser, owner, livyConf)
+    val impersonatedUser = accessManager.checkImpersonation(proxyUser, owner, livyConf)
 
     def createSparkApp(s: BatchSession): SparkApp = {
       val conf = SparkApp.prepareSparkConf(

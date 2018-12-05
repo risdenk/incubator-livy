@@ -158,7 +158,23 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
   /**
    * Returns the remote user for the given request. Separate method so that tests can override it.
    */
-  protected def remoteUser(req: HttpServletRequest): String = req.getRemoteUser()
+  protected def remoteUser(req: HttpServletRequest): String = req.getRemoteUser
+
+  /**
+    * @return The user that should be impersonated from the doAs query parameter
+    */
+  protected def getProxyUserFromDoAs(req: HttpServletRequest): Option[String] = {
+    Option(req.getParameter("doAs"))
+  }
+
+  /**
+    * @return The user that should is the effective user after taking into account doAs
+    */
+  protected def effectiveUser(req: HttpServletRequest): String = {
+    val requestUser = remoteUser(req)
+    val proxyUser = getProxyUserFromDoAs(req)
+    accessManager.checkImpersonation(proxyUser, requestUser, livyConf).getOrElse(requestUser)
+  }
 
   /**
    * Performs an operation on the session, without checking for ownership. Operations executed
@@ -183,11 +199,11 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
 
   private def doWithSession(fn: (S => Any),
       allowAll: Boolean,
-      checkFn: Option[(String, String) => Boolean]): Any = {
+      checkFn: Option[(Session, String) => Boolean]): Any = {
     val sessionId = params("id").toInt
     sessionManager.get(sessionId) match {
       case Some(session) =>
-        if (allowAll || checkFn.map(_(session.owner, remoteUser(request))).getOrElse(false)) {
+        if (allowAll || checkFn.map(_(session, effectiveUser(request))).getOrElse(false)) {
           fn(session)
         } else {
           Forbidden()
