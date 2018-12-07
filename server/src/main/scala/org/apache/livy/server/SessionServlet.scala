@@ -158,7 +158,21 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
   /**
    * Returns the remote user for the given request. Separate method so that tests can override it.
    */
-  protected def remoteUser(req: HttpServletRequest): String = req.getRemoteUser()
+  protected def getOwner(req: HttpServletRequest): String = accessManager.getRequestUser(req)
+
+  protected def checkBodyProxyUser(owner: String, bodyProxyUser: Option[String],
+                                   req: HttpServletRequest): Option[String] = {
+    // Fall back to proxyUser body
+    if (bodyProxyUser.isDefined && accessManager.checkImpersonation(req, bodyProxyUser.get)) {
+      bodyProxyUser
+    } else {
+      Option(owner)
+    }
+  }
+
+  protected def getImpersonatedUser(req: HttpServletRequest): Option[String] = {
+    accessManager.getImpersonatedUser(req)
+  }
 
   /**
    * Performs an operation on the session, without checking for ownership. Operations executed
@@ -183,11 +197,11 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
 
   private def doWithSession(fn: (S => Any),
       allowAll: Boolean,
-      checkFn: Option[(String, String) => Boolean]): Any = {
+      checkFn: Option[(Session, HttpServletRequest) => Boolean]): Any = {
     val sessionId = params("id").toInt
     sessionManager.get(sessionId) match {
       case Some(session) =>
-        if (allowAll || checkFn.map(_(session.owner, remoteUser(request))).getOrElse(false)) {
+        if (allowAll || checkFn.map(_(session, request)).getOrElse(false)) {
           fn(session)
         } else {
           Forbidden()

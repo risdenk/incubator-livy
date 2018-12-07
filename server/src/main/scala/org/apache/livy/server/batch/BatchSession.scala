@@ -26,7 +26,6 @@ import scala.util.Random
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 import org.apache.livy.{LivyConf, Logging, Utils}
-import org.apache.livy.server.AccessManager
 import org.apache.livy.server.recovery.SessionStore
 import org.apache.livy.sessions.{Session, SessionState}
 import org.apache.livy.sessions.Session._
@@ -55,12 +54,11 @@ object BatchSession extends Logging {
       id: Int,
       request: CreateBatchRequest,
       livyConf: LivyConf,
-      accessManager: AccessManager,
       owner: String,
+      impersonatedUser: Option[String],
       sessionStore: SessionStore,
       mockApp: Option[SparkApp] = None): BatchSession = {
     val appTag = s"livy-batch-$id-${Random.alphanumeric.take(8).mkString}"
-    val impersonatedUser = accessManager.checkImpersonation(request.proxyUser, owner, livyConf)
 
     def createSparkApp(s: BatchSession): SparkApp = {
       val conf = SparkApp.prepareSparkConf(

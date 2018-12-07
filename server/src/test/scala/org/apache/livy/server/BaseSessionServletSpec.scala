@@ -18,18 +18,18 @@
 package org.apache.livy.server
 
 import javax.servlet.http.HttpServletRequest
-
 import org.scalatest.BeforeAndAfterAll
-
 import org.apache.livy.LivyConf
+import org.apache.livy.server.interactive.{InteractiveSession, InteractiveSessionServlet}
 import org.apache.livy.sessions.Session
 import org.apache.livy.sessions.Session.RecoveryMetadata
 
 object BaseSessionServletSpec {
-
   /** Header used to override the user remote user in tests. */
   val REMOTE_USER_HEADER = "X-Livy-SessionServlet-User"
 
+  /** Header used to override the user doAs user in tests. */
+  val DOAS_USER_HEADER = "X-Livy-SessionServlet-DoAsUser"
 }
 
 abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
@@ -77,14 +77,10 @@ abstract class BaseSessionServletSpec[S <: Session, R <: RecoveryMetadata]
   addServlet(servlet, "/*")
 
   protected def toJson(msg: AnyRef): Array[Byte] = mapper.writeValueAsBytes(msg)
-
 }
 
-trait RemoteUserOverride {
-  this: SessionServlet[_, _] =>
-
-  override protected def remoteUser(req: HttpServletRequest): String = {
-    req.getHeader(BaseSessionServletSpec.REMOTE_USER_HEADER)
+trait RequestOverride extends InteractiveSessionServlet {
+  override protected def createSession(req: HttpServletRequest): InteractiveSession = {
+    super.createSession(new MockHttpServletRequest(req))
   }
-
 }

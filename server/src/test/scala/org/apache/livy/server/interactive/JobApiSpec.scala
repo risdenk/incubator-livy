@@ -21,19 +21,18 @@ import java.io.File
 import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.file.{Files, Paths}
+
 import javax.servlet.http.HttpServletResponse._
 
 import scala.concurrent.duration._
 import scala.io.Source
 import scala.language.postfixOps
-
 import org.scalatest.concurrent.Eventually._
 import org.scalatest.mock.MockitoSugar.mock
-
 import org.apache.livy.{Job, JobHandle}
 import org.apache.livy.client.common.{BufferUtils, Serializer}
 import org.apache.livy.client.common.HttpMessages._
-import org.apache.livy.server.{AccessManager, RemoteUserOverride}
+import org.apache.livy.server.{AccessManager, RequestOverride}
 import org.apache.livy.server.recovery.SessionStore
 import org.apache.livy.sessions.{InteractiveSessionManager, SessionState}
 import org.apache.livy.test.jobs.{Echo, GetCurrentUser}
@@ -50,7 +49,7 @@ class JobApiSpec extends BaseInteractiveServletSpec {
     val sessionManager = new InteractiveSessionManager(conf, sessionStore, Some(Seq.empty))
     val accessManager = new AccessManager(conf)
     new InteractiveSessionServlet(sessionManager, sessionStore, conf, accessManager)
-      with RemoteUserOverride
+      with RequestOverride
   }
 
   def withSessionId(desc: String)(fn: (Int) => Unit): Unit = {

@@ -19,6 +19,8 @@ package org.apache.livy.server
 
 import java.security.AccessControlException
 
+import javax.servlet.http.HttpServletRequest
+import org.apache.livy.sessions.Session
 import org.apache.livy.{LivyConf, Logging}
 
 private[livy] class AccessManager(conf: LivyConf) extends Logging {
@@ -97,47 +99,71 @@ private[livy] class AccessManager(conf: LivyConf) extends Logging {
    */
   def isAccessControlOn: Boolean = aclsOn
 
+  def getRequestUser(request: HttpServletRequest): String = {
+    request.getRemoteUser
+  }
+
+  def getImpersonatedUser(request: HttpServletRequest): Option[String] = {
+    val impersonatedUser = Option(request.getParameter("doAs"))
+    impersonatedUser.filter(checkImpersonation(request, _))
+  }
+
+  def getEffectiveUser(request: HttpServletRequest): String = {
+    val requestUser = getRequestUser(request)
+    val impersonatedUser = getImpersonatedUser(request)
+    impersonatedUser.getOrElse(requestUser)
+  }
+
   /**
    * Checks that the requesting user can impersonate the target user.
    * If the user does not have permission to impersonate, then throws an `AccessControlException`.
-   *
-   * @return The user that should be impersonated. That can be the target user if defined, the
-   *         request's user - which may not be defined - otherwise, or `None` if impersonation is
-   *         disabled.
    */
-  def checkImpersonation(
-      target: Option[String],
-      requestUser: String,
-      livyConf: LivyConf): Option[String] = {
-    if (livyConf.getBoolean(LivyConf.IMPERSONATION_ENABLED)) {
-      if (!target.forall(hasSuperAccess(_, requestUser))) {
-        throw new AccessControlException(
-          s"User '$requestUser' not allowed to impersonate '$target'.")
+  def checkImpersonation(request: HttpServletRequest, impersonatedUser: String): Boolean = {
+    val requestUser = getRequestUser(request)
+    if(conf.getBoolean(LivyConf.IMPERSONATION_ENABLED)) {
+      if(hasSuperAccess(request, impersonatedUser) || checkProxyUser(request, impersonatedUser)) {
+        return true
       }
-      target.orElse(Option(requestUser))
-    } else {
-      None
+      throw new AccessControlException(
+        s"User '$requestUser' not allowed to impersonate '$impersonatedUser'.")
     }
+    false
+  }
+
+  def checkProxyUser(request: HttpServletRequest, impersonatedUser: String): Boolean = {
+    val proxyUser = getRequestUser(request)
+    val remoteHost = request.getRemoteHost
+    val allowedHosts = conf.hadoopConf.get("hadoop.proxyuser." + proxyUser + ".hosts")
+    val allowedUsers = conf.hadoopConf.get("hadoop.proxyuser." + proxyUser + ".users")
+    allowedHosts != null && allowedHosts.split(',').contains(remoteHost) &&
+      allowedUsers != null && allowedUsers.split(',').contains(impersonatedUser)
   }
 
   /**
    * Check that the requesting user has admin access to resources owned by the given target user.
    */
-  def hasSuperAccess(target: String, requestUser: String): Boolean = {
-    requestUser == target || checkSuperUser(requestUser)
+  def hasSuperAccess(request: HttpServletRequest, impersonatedUser: String): Boolean = {
+    val requestUser = getRequestUser(request)
+    requestUser == impersonatedUser || checkSuperUser(requestUser)
   }
 
   /**
    * Check that the request's user has modify access to resources owned by the given target user.
    */
-  def hasModifyAccess(target: String, requestUser: String): Boolean = {
-    requestUser == target || checkModifyPermissions(requestUser)
+  def hasModifyAccess(session: Session, request: HttpServletRequest): Boolean = {
+    val effectiveUser = getEffectiveUser(request)
+    effectiveUser == session.owner ||
+      session.proxyUser.contains(effectiveUser) ||
+      checkModifyPermissions(effectiveUser)
   }
 
   /**
    * Check that the request's user has view access to resources owned by the given target user.
    */
-  def hasViewAccess(target: String, requestUser: String): Boolean = {
-    requestUser == target || checkViewPermissions(requestUser)
+  def hasViewAccess(session: Session, request: HttpServletRequest): Boolean = {
+    val effectiveUser = getEffectiveUser(request)
+    session.owner == effectiveUser ||
+      session.proxyUser.contains(effectiveUser) ||
+      checkViewPermissions(effectiveUser)
   }
 }

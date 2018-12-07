@@ -28,15 +28,15 @@ import org.apache.livy.sessions.{Session, SessionManager, SessionState}
 import org.apache.livy.sessions.Session.RecoveryMetadata
 
 object SessionServletSpec {
-
   val PROXY_USER = "proxyUser"
 
-  class MockSession(id: Int, owner: String, livyConf: LivyConf)
+  class MockSession(id: Int,
+                    owner: String,
+                    override val proxyUser: Option[String],
+                    livyConf: LivyConf)
     extends Session(id, owner, livyConf) {
 
     case class MockRecoveryMetadata(id: Int) extends RecoveryMetadata()
-
-    override val proxyUser = None
 
     override def recoveryMetadata: RecoveryMetadata = MockRecoveryMetadata(0)
 
@@ -45,7 +45,6 @@ object SessionServletSpec {
     override protected def stopSession(): Unit = ()
 
     override def logLines(): IndexedSeq[String] = IndexedSeq("log")
-
   }
 
   case class MockSessionView(id: Int, owner: String, logs: Seq[String])
@@ -59,17 +58,23 @@ object SessionServletSpec {
       Some(Seq.empty))
 
     val accessManager = new AccessManager(conf)
-    new SessionServlet(sessionManager, conf, accessManager) with RemoteUserOverride {
+    new SessionServlet(sessionManager, conf, accessManager) {
       override protected def createSession(req: HttpServletRequest): Session = {
-        val params = bodyAs[Map[String, String]](req)
-        accessManager.checkImpersonation(params.get(PROXY_USER), remoteUser(req), livyConf)
-        new MockSession(sessionManager.nextId(), remoteUser(req), conf)
+        val testRequest = new MockHttpServletRequest(req)
+        val params = bodyAs[Map[String, String]](testRequest)
+        val owner = getOwner(testRequest)
+        val impersonatedUser = getImpersonatedUser(testRequest).orElse(params.get(PROXY_USER))
+        if(impersonatedUser.isDefined) {
+          accessManager.checkImpersonation(testRequest, impersonatedUser.get)
+        }
+
+        new MockSession(sessionManager.nextId(), owner, impersonatedUser, conf)
       }
 
       override protected def clientSessionView(
           session: Session,
           req: HttpServletRequest): Any = {
-        val logs = if (accessManager.hasViewAccess(session.owner, remoteUser(req))) {
+        val logs = if (accessManager.hasViewAccess(session, req)) {
           session.logLines()
         } else {
           Nil
@@ -78,11 +83,9 @@ object SessionServletSpec {
       }
     }
   }
-
 }
 
 class SessionServletSpec extends BaseSessionServletSpec[Session, RecoveryMetadata] {
-
   import SessionServletSpec._
 
   override def createServlet(): SessionServlet[Session, RecoveryMetadata] = {
